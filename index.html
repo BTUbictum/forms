@@ -309,8 +309,7 @@ try {
     });
     msalDisponible = true;
     msalInstance.handleRedirectPromise().then(()=>{
-      actualizarBotonLogin();
-      if (cuentaActiva()) cargarCarpetasAnio();
+      verificarYActualizar();
     });
   } else {
     document.getElementById('btn-login').style.display = 'none';
@@ -331,11 +330,42 @@ function cuentaActiva(){
   return cuentas.length ? cuentas[0] : null;
 }
 
+// Cuenta ya validada para ESTA app específica (no solo "hay algo en caché").
+// null hasta que verificarYActualizar() confirme acceso real vía Azure.
+let cuentaValidada = null;
+
+// IMPORTANTE: este portal comparte dominio (y por lo tanto localStorage)
+// con los demás portales U-*. getAllAccounts() puede traer una cuenta que
+// inició sesión en OTRO portal, sin que tenga permiso aquí. Por eso
+// siempre pedimos un token específico para esta app (acquireTokenSilent /
+// ssoSilent) antes de considerar a alguien "conectado" en la UI — aunque
+// las llamadas reales a SharePoint (obtenerToken) ya estaban protegidas,
+// esto evita mostrar "✓ Sesión" a alguien sin acceso real.
+async function verificarYActualizar(){
+  cuentaValidada = null;
+  if (msalDisponible) {
+    const cuentas = msalInstance.getAllAccounts();
+    try {
+      let resp;
+      if (cuentas.length > 0) {
+        resp = await msalInstance.acquireTokenSilent({ scopes: ['Sites.ReadWrite.All'], account: cuentas[0] });
+      } else {
+        resp = await msalInstance.ssoSilent({ scopes: ['Sites.ReadWrite.All'] });
+      }
+      msalInstance.setActiveAccount(resp.account);
+      cuentaValidada = resp.account;
+    } catch (e) {
+      cuentaValidada = null;
+    }
+  }
+  actualizarBotonLogin();
+  if (cuentaValidada) cargarCarpetasAnio();
+}
+
 function actualizarBotonLogin(){
   const btn = document.getElementById('btn-login');
-  const cuenta = cuentaActiva();
-  if (cuenta) {
-    btn.textContent = `✓ Sesión: ${cuenta.username}`;
+  if (cuentaValidada) {
+    btn.textContent = `✓ Sesión: ${cuentaValidada.username}`;
     btn.disabled = true;
     btn.style.opacity = '0.65';
     btn.style.cursor = 'default';
@@ -349,7 +379,7 @@ function actualizarBotonLogin(){
 
 document.getElementById('btn-login').addEventListener('click', async ()=>{
   if (!msalDisponible) return;
-  if (cuentaActiva()) return; // ya hay sesión
+  if (cuentaValidada) return; // ya hay sesión válida para esta app
   try {
     await msalInstance.loginRedirect({ scopes: ['Sites.ReadWrite.All'] });
     // la página navega a Microsoft y regresa sola; handleRedirectPromise() se
@@ -358,7 +388,13 @@ document.getElementById('btn-login').addEventListener('click', async ()=>{
     alert('No se pudo iniciar sesión: ' + err.message);
   }
 });
-if (msalDisponible && cuentaActiva()) cargarCarpetasAnio();
+if (msalDisponible) {
+  // Cubre el caso de una visita nueva (sin volver de un redirect de login) —
+  // valida si ya hay una sesión real para esta app antes de mostrar nada.
+  // Es seguro llamarlo también después de handleRedirectPromise(); solo
+  // vuelve a verificar, no causa ningún efecto duplicado visible.
+  verificarYActualizar();
+}
 if (msalDisponible) actualizarBotonLogin();
 
 document.getElementById('select-anio').addEventListener('change', (e)=>{
@@ -638,7 +674,7 @@ document.getElementById('form-ausencia').addEventListener('submit', async (e)=>{
   const yyyy = hoy.getFullYear();
   const nombre = `FO-UB-181-${val('num-empleado')}-${dd}${mm}${yyyy}.pdf`;
 
-  if (CONFIGURADO && cuentaActiva()) {
+  if (CONFIGURADO && cuentaValidada) {
     try {
       status.textContent = 'Subiendo a SharePoint…';
       const blob = doc.output('blob');
@@ -650,7 +686,7 @@ document.getElementById('form-ausencia').addEventListener('submit', async (e)=>{
       doc.save(nombre);
       status.textContent = 'No se pudo subir a SharePoint (' + err.message + '). Se descargó localmente: ' + nombre;
     }
-  } else if (CONFIGURADO && !cuentaActiva()) {
+  } else if (CONFIGURADO && !cuentaValidada) {
     status.textContent = 'Inicia sesión (botón superior derecho) para guardar directo en SharePoint. Por ahora se descargó localmente.';
     doc.save(nombre);
   } else {
