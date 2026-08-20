@@ -106,13 +106,32 @@
   }
   .status{font-size:15px; margin-top:10px; min-height:16px;}
   .status.ok{color:var(--accent);}
+
+  .brand-lockup{cursor:pointer;}
+
+  .gate{
+    min-height:60vh;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:16px; text-align:center; padding:60px 20px;
+  }
+  .gate-title{font-size:20px; font-weight:800; color:var(--ink);}
+  .gate-subtitle{color:var(--gris); font-size:13.5px; max-width:380px;}
+  .gate-login-btn{
+    border:none; background:var(--accent); color:#fff;
+    padding:13px 26px; border-radius:2px; font-size:14.5px; font-weight:700;
+    cursor:pointer; font-family:inherit;
+  }
+  .gate-login-btn:hover{ opacity:.9; }
+  .gate-login-btn:disabled{ opacity:.6; cursor:default; }
+  .gate-err{color:var(--danger); font-size:12.5px; max-width:420px;}
+  #appContent{ display:none; }
 </style>
 </head>
 <body>
 <div class="wrap">
 
   <div class="topbar">
-    <div class="brand-lockup">
+    <div class="brand-lockup" onclick="window.location.href='https://btubictum.github.io/U-Home/'" title="Regresar a U-Home">
       <div class="brand-text">
         <div class="brand-word">UBICTUM</div>
         <div class="brand-slogan">La puerta de entrada al mercado</div>
@@ -120,9 +139,16 @@
     </div>
     <div style="text-align:right;">
       <div class="stepper" id="fecha-actual"></div>
-      <button type="button" id="btn-login" style="margin-top:4px;font-size:13px;padding:7px 12px;border:1px solid var(--ink);background:#fff;border-radius:2px;cursor:pointer;">Iniciar sesión</button>
     </div>
   </div>
+
+  <!-- ======================= GATE DE SESIÓN ======================= -->
+  <div class="gate" id="gate">
+    <div class="gate-title">Verificando tu sesión…</div>
+    <div class="gate-subtitle">Un momento, estamos confirmando tu acceso a Forms.</div>
+  </div>
+
+  <div id="appContent">
 
   <select class="formato" id="formato-select">
     <option value="ausencia">Reporte de Ausencia (FO-UB-181)</option>
@@ -268,6 +294,8 @@
     </div>
     <div class="status" id="status"></div>
   </form>
+
+  </div><!-- /appContent -->
 </div>
 
 <script>
@@ -312,16 +340,25 @@ try {
       verificarYActualizar();
     });
   } else {
-    document.getElementById('btn-login').style.display = 'none';
+    mostrarAppSinGate();
   }
 } catch (err) {
   console.error('No se pudo inicializar MSAL:', err);
-  const btn = document.getElementById('btn-login');
-  btn.textContent = 'SharePoint no disponible';
-  btn.disabled = true;
-  btn.style.opacity = '0.5';
-  const status = document.getElementById('status');
-  if (status) status.textContent = '⚠ No se pudo inicializar el login de SharePoint: ' + err.message + ' — el formulario sigue funcionando, generará el PDF localmente.';
+  mostrarErrorGate('No se pudo inicializar el login de SharePoint: ' + err.message);
+}
+
+function mostrarAppSinGate(){
+  document.getElementById('gate').style.display = 'none';
+  document.getElementById('appContent').style.display = 'block';
+}
+
+function mostrarErrorGate(msg){
+  document.getElementById('gate').innerHTML = `
+    <div class="gate-title">No se pudo iniciar sesión</div>
+    <div class="gate-subtitle">${msg}</div>
+    <button type="button" class="gate-login-btn" id="btn-retry-login" style="margin-top:6px;">Reintentar</button>
+  `;
+  document.getElementById('btn-retry-login').addEventListener('click', ()=> hacerLogin());
 }
 
 function cuentaActiva(){
@@ -363,31 +400,32 @@ async function verificarYActualizar(){
 }
 
 function actualizarBotonLogin(){
-  const btn = document.getElementById('btn-login');
   if (cuentaValidada) {
-    btn.textContent = `✓ Sesión: ${cuentaValidada.username}`;
-    btn.disabled = true;
-    btn.style.opacity = '0.65';
-    btn.style.cursor = 'default';
+    document.getElementById('gate').style.display = 'none';
+    document.getElementById('appContent').style.display = 'block';
   } else {
-    btn.textContent = 'Iniciar sesión';
-    btn.disabled = false;
-    btn.style.opacity = '1';
-    btn.style.cursor = 'pointer';
+    document.getElementById('appContent').style.display = 'none';
+    document.getElementById('gate').style.display = 'flex';
+    document.getElementById('gate').innerHTML = `
+      <div class="gate-title">Inicia sesión para continuar</div>
+      <div class="gate-subtitle">Forms es un portal interno de Ubictum — usa tu cuenta de correo institucional para llenar y guardar el formato.</div>
+      <button type="button" class="gate-login-btn" id="btn-login">Iniciar sesión</button>
+    `;
+    document.getElementById('btn-login').addEventListener('click', hacerLogin);
   }
 }
 
-document.getElementById('btn-login').addEventListener('click', async ()=>{
+async function hacerLogin(){
   if (!msalDisponible) return;
-  if (cuentaValidada) return; // ya hay sesión válida para esta app
   try {
     await msalInstance.loginRedirect({ scopes: ['Sites.ReadWrite.All'] });
     // la página navega a Microsoft y regresa sola; handleRedirectPromise() se
-    // encarga de actualizar el botón y cargar Año/Semana al volver.
+    // encarga de actualizar el gate y cargar Año/Semana al volver.
   } catch(err){
-    alert('No se pudo iniciar sesión: ' + err.message);
+    mostrarErrorGate(err.message);
   }
-});
+}
+
 if (msalDisponible) {
   // Cubre el caso de una visita nueva (sin volver de un redirect de login) —
   // valida si ya hay una sesión real para esta app antes de mostrar nada.
@@ -395,7 +433,6 @@ if (msalDisponible) {
   // vuelve a verificar, no causa ningún efecto duplicado visible.
   verificarYActualizar();
 }
-if (msalDisponible) actualizarBotonLogin();
 
 document.getElementById('select-anio').addEventListener('change', (e)=>{
   if (e.target.value) cargarCarpetasSemana(e.target.value);
@@ -687,7 +724,7 @@ document.getElementById('form-ausencia').addEventListener('submit', async (e)=>{
       status.textContent = 'No se pudo subir a SharePoint (' + err.message + '). Se descargó localmente: ' + nombre;
     }
   } else if (CONFIGURADO && !cuentaValidada) {
-    status.textContent = 'Inicia sesión (botón superior derecho) para guardar directo en SharePoint. Por ahora se descargó localmente.';
+    status.textContent = 'Inicia sesión para guardar directo en SharePoint. Por ahora se descargó localmente.';
     doc.save(nombre);
   } else {
     doc.save(nombre);
